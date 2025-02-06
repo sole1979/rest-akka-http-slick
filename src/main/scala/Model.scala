@@ -1,5 +1,11 @@
+import java.time.LocalDateTime
 
 case class Product(sku: String, category: String, name: String, price: BigDecimal, descr: String, srcImg: String)
+case class UserAccount(id: Option[Int], name: String, email: String, phone: Option[String], password: String, salt: String, created_at: LocalDateTime)
+case class UserAccountRegister(name: String, email: String, password: String)
+case class UserAccountLogin(email: String, password: String)
+case class UserAccountLoginAnswer(name: String, token: String)
+case class Answer(message: String)
 
 
 object SlickTables {
@@ -15,6 +21,18 @@ object SlickTables {
     override def * = (sku, category, name, price, descr, srcImg) <> (Product.tupled, Product.unapply)
   }
   lazy val productTable = TableQuery[ProductTable]
+
+  class UserAccountTable(tag: Tag) extends Table[UserAccount](tag,  Some("shop"), "UserAccounts") {
+    def id = column[Int]("id", O.PrimaryKey, O.AutoInc)
+    def name = column[String]("name")
+    def email = column[String]("email")
+    def phone = column[Option[String]]("phone")
+    def password = column[String]("password")
+    def salt = column[String]("salt")
+    def created_at = column[LocalDateTime]("created_at")
+    override def * = (id.?, name, email, phone, password, salt, created_at) <> (UserAccount.tupled, UserAccount.unapply)
+  }
+  lazy val userAccountTable = TableQuery[UserAccountTable]
 
 }
 

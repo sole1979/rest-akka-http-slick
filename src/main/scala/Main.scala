@@ -9,7 +9,11 @@ import spray.json._
 
 
 trait ProductJsonProtocol extends DefaultJsonProtocol {
-  implicit val productFormat = jsonFormat6(Product)
+  implicit val productFormat /*: RootJsonFormat[Product]*/ = jsonFormat6(Product)
+  implicit val userAccountRegisterFormat = jsonFormat3(UserAccountRegister)
+  implicit val userAccountLoginFormat = jsonFormat2(UserAccountLogin)
+  implicit val answerFormat = jsonFormat1(Answer)
+  implicit val userAccountLoginAnswer = jsonFormat2(UserAccountLoginAnswer)
 }
 
 object Main extends App with Routes with ProductJsonProtocol with SprayJsonSupport {
@@ -17,7 +21,7 @@ object Main extends App with Routes with ProductJsonProtocol with SprayJsonSuppo
   implicit val materializer = ActorMaterializer()
   import system.dispatcher
 
-  val productServiceActor = system.actorOf(Props[ProductServiceActor], "productServiceActor")
+  val serviceActor = system.actorOf(Props[ServiceActor], "serviceActor")
 
   Http().bindAndHandle(routes, "localhost", 8080)
 
