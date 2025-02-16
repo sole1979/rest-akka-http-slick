@@ -13,6 +13,10 @@ import spray.json._
 import akka.http.scaladsl.server.Route
 import akka.http.scaladsl.model.{ContentTypes, HttpEntity, HttpResponse, StatusCode, StatusCodes}
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
+//import akka.http.scaladsl.model.headers.{HttpCookie, RawHeader, `Set-Cookie`}
+import akka.http.scaladsl.model.headers._
+//import akka.http.scaladsl.model.headers.SameSite
+//import akka.http.scaladsl.model.headers.HttpCookie.SameSite
 
 object ValidationMiddleware {
   def isNameValid(name: String): Boolean = {
@@ -46,13 +50,29 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport{
             else if (!ValidationMiddleware.isEmailValid(loginData.email))
               complete(StatusCodes.BadRequest -> "Invalid email format".toJson)
             else {
-              val authResult: Future[Either[String, UserAccountLoginAnswer]] =
+              val authResult: Future[Either[String, TokensAnswer]] =
                 (serviceActor ? AuthenticateUser(loginData.email, loginData.password))
-                .mapTo[Either[String, UserAccountLoginAnswer]]
-              complete(authResult.map {
-                case Right(userLoginAnswer) => StatusCodes.OK -> userLoginAnswer.toJson
-                case Left(error) => StatusCodes.Unauthorized -> error.toJson
-              })
+                  .mapTo[Either[String, TokensAnswer]]
+                  .recover { case _ => Left("Internal server error")}
+              onSuccess(authResult) {
+                case Right(tokensAnswer) =>
+                  val refreshCookie = HttpCookie(
+                    name = "refreshToken",
+                    value = tokensAnswer.refreshToken,
+                    //httpOnly = false, //true,
+                    secure = true,
+                    maxAge = Some (30 * 24 * 60 * 60)  // 30 day
+                  )
+                  val cookieHeader = RawHeader(
+                    "Set-Cookie",
+                    s"refreshToken=${refreshCookie.value}; Secure; Max-Age=${refreshCookie.maxAge.get}; SameSite=Lax; HttpOnly=true"
+                  )
+                  respondWithHeader(cookieHeader) {
+                  //respondWithHeaders(`Set-Cookie` (refreshCookie)) {
+                    complete(StatusCodes.OK -> UserAccountLoginAnswer(tokensAnswer.username, tokensAnswer.accessToken).toJson)
+                  }
+                case Left(error) => complete(StatusCodes.Unauthorized -> error.toJson)
+              }
             }
           }
         }
@@ -71,12 +91,71 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport{
             else {
               val registerResult =
                 (serviceActor ? CreateUserAccount(userRequest.name, userRequest.email, userRequest.password))
-                .mapTo[Either[String, UserAccountLoginAnswer]]
-              complete(registerResult.map{
-                case Right(userLoginAnswer) => StatusCodes.OK -> userLoginAnswer.toJson
-                case Left(error) => StatusCodes.Unauthorized -> error.toJson
-              })
+                  .mapTo[Either[String, TokensAnswer]]
+                  .recover { case _ => Left("Internal server error")}
+              onSuccess(registerResult) {
+                case Right(tokensAnswer) =>
+                  val refreshCookie = HttpCookie(
+                    name = "refreshToken",
+                    value = tokensAnswer.refreshToken,
+                   // httpOnly = true,
+                    secure = true,
+                    maxAge = Some (30 * 24 * 60 * 60)  // 30 day
+                  )
+                  val cookieHeader = RawHeader(
+                    "Set-Cookie",
+                    s"refreshToken=${refreshCookie.value}; Secure; Max-Age=${refreshCookie.maxAge.get}; SameSite=Lax; HttpOnly=true"
+                  )
+                  respondWithHeader(cookieHeader) {
+                  //respondWithHeaders(`Set-Cookie` (refreshCookie)) {
+                    complete(StatusCodes.OK -> UserAccountLoginAnswer(tokensAnswer.username, tokensAnswer.accessToken).toJson)
+                  }
+                case Left(error) => complete(StatusCodes.Unauthorized -> error.toJson)
+              }
             }
+          }
+        }
+      }
+    } ~
+    post {
+      pathPrefix("logout") {
+        pathEndOrSingleSlash {
+          respondWithHeaders(`Set-Cookie` (HttpCookie("refreshToken", value = "", maxAge = Some(0)))) {
+            complete("Logged out")
+          }
+        }
+      }
+    } ~
+    post {
+      pathPrefix("refresh") {
+        pathEndOrSingleSlash {
+          optionalCookie("refreshToken") {
+            case Some(cookie) =>
+              val refreshToken = cookie.value
+              val refreshResult: Future[Either[String, TokensAnswer]] =
+                (serviceActor ? RefreshTokens(refreshToken))
+                  .mapTo[Either[String, TokensAnswer]]
+                  .recover { case _ => Left("Internal server error")}
+              onSuccess(refreshResult) {
+                case Right(tokensAnswer) =>
+                  val refreshCookie = HttpCookie(
+                    name = "refreshToken",
+                    value = tokensAnswer.refreshToken,
+                    //httpOnly = false, //true,
+                    secure = true,
+                    maxAge = Some(30 * 24 * 60 * 60)
+                  )
+                  val cookieHeader = RawHeader(
+                    "Set-Cookie",
+                    s"refreshToken=${refreshCookie.value}; Secure; Max-Age=${refreshCookie.maxAge.get}; SameSite=Lax; HttpOnly=true"
+                  )
+                  respondWithHeader(cookieHeader) {
+                  //respondWithHeader(RawHeader("Set-Cookie", refreshCookie.toString)) {
+                    complete(StatusCodes.OK -> UserAccountLoginAnswer(tokensAnswer.username, tokensAnswer.accessToken).toJson)
+                  }
+                case Left(error) => complete(StatusCodes.Unauthorized -> error)
+              }
+            case None => complete(StatusCodes.Unauthorized -> "Missing refresh token")
           }
         }
       }
@@ -84,7 +163,9 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport{
     get {
       pathPrefix("categories") {
         pathEndOrSingleSlash {
-          val productList = (serviceActor ? GetAllCategories).mapTo[Either[String, Seq[String]]]
+          val productList = (serviceActor ? GetAllCategories)
+            .mapTo[Either[String, Seq[String]]]
+            .recover { case _ => Left("Internal server error")}
           complete(productList.map{
             case Right(products) => StatusCodes.OK -> products.toJson
             case Left(error) => StatusCodes.InternalServerError -> error.toJson
@@ -94,7 +175,9 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport{
       pathPrefix(Segment / Segment) { (category, sku) =>         // Get Product by sku
         pathEndOrSingleSlash {
           val productOptionFuture: Future[Either[String, Option[Product]]]  =
-            (serviceActor ? GetProduct(sku)).mapTo[Either[String, Option[Product]]]
+            (serviceActor ? GetProduct(sku))
+              .mapTo[Either[String, Option[Product]]]
+              .recover { case _ => Left("Internal server error")}
           complete(productOptionFuture.map {
             case Right(Some(product)) => StatusCodes.OK -> product.toJson
             case Right(None) => StatusCodes.NotFound -> "Product not found".toJson
@@ -104,7 +187,9 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport{
       } ~
       pathPrefix(Segment) { category => //| parameter('nickname)) { nickname =>
         pathEndOrSingleSlash {
-          val productList = (serviceActor ? GetProductsByCategory(category)).mapTo[Either[String, Seq[Product]]]
+          val productList = (serviceActor ? GetProductsByCategory(category))
+            .mapTo[Either[String, Seq[Product]]]
+            .recover { case _ => Left("Internal server error")}
           complete(productList.map{
             case Right(products) => StatusCodes.OK -> products.toJson
             case Left(error) => StatusCodes.InternalServerError -> error.toJson
@@ -112,7 +197,9 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport{
         }
       } ~
       pathEndOrSingleSlash {      // get All Product
-        val productList = (serviceActor ? GetAllProducts).mapTo[Either[String, Seq[Product]]]
+        val productList = (serviceActor ? GetAllProducts)
+          .mapTo[Either[String, Seq[Product]]]
+          .recover { case _ => Left("Internal server error")}
         complete(productList.map{
           case Right(products) => StatusCodes.OK -> products.toJson
           case Left(error) => StatusCodes.InternalServerError -> error.toJson

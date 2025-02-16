@@ -1,0 +1,28 @@
+<configuration>
+    <!-- Выключаем DEBUG логи для HikariCP -->
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+
+    <!-- Выключаем DEBUG логи для Akka -->
+    <logger name="akka" level="WARN"/>
+
+    <!-- Выключаем DEBUG логи для Akka HTTP -->
+    <logger name="akka.http" level="WARN"/>
+
+    <!-- Ограничиваем логи SLF4J -->
+    <logger name="org.slf4j" level="WARN"/>
+
+    <!-- Логи приложения -->
+    <!--<logger name="your.package.name" level="INFO"/> -->
+
+    <!-- Корневой логгер (можно менять уровень, если нужно) -->
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+    <!-- Куда писать логи -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+</configuration>

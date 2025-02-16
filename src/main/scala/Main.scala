@@ -1,10 +1,9 @@
 
 import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
+import akka.event.Logging
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
-
 import akka.stream.ActorMaterializer
-
 import spray.json._
 
 
@@ -18,6 +17,7 @@ trait ProductJsonProtocol extends DefaultJsonProtocol {
 
 object Main extends App with Routes with ProductJsonProtocol with SprayJsonSupport {
   implicit val system = ActorSystem("ProductShop")
+  //system.eventStream.setLogLevel(Logging.WarningLevel)
   implicit val materializer = ActorMaterializer()
   import system.dispatcher
 

@@ -5,6 +5,7 @@ case class UserAccount(id: Option[Int], name: String, email: String, phone: Opti
 case class UserAccountRegister(name: String, email: String, password: String)
 case class UserAccountLogin(email: String, password: String)
 case class UserAccountLoginAnswer(name: String, token: String)
+case class TokensAnswer(username: String, accessToken: String, refreshToken: String)
 case class Answer(message: String)
 
 
