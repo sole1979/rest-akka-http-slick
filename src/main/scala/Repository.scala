@@ -23,6 +23,11 @@ trait RepositorySlickImpl { //extends Repository {
       .map  (Right(_)) //// case Some(row) => Right(Some(row: Product))
       .recover {case ex => Left(ex.getMessage)}  // error db
 
+  def findProductsBySku(skus: List[String]): Future[Either[String, Seq[Product]]] =
+    Connection.db.run(SlickTables.productTable.filter(_.sku inSet skus).result)
+      .map(Right(_))
+      .recover {case ex => Left(ex.getMessage)}
+
   def findAllByCategory(category: String): Future[Either[String, Seq[Product]]] =
     Connection.db.run(SlickTables.productTable.filter(_.category === category).result)  //.map(_.toList)
       .map(Right(_))

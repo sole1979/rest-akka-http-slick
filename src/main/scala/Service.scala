@@ -77,7 +77,7 @@ object ServiceActor {
   case object GetAllCategories
   case class GetProduct(sku: String)
   case class GetProductsByCategory(category: String)
-  //case class AddProduct(product: Product)
+  case class GetProductsBySku(skus: List[String])
   case class AuthenticateUser(email: String, passVerify: String)
   case class CreateUserAccount(name: String, email: String, password: String)
   case class RefreshTokens(refreshToken: String)
@@ -108,6 +108,11 @@ class ServiceActor extends Actor with ActorLogging with RepositorySlickImpl {
       log.info(s"Getting products from category $category")
       val replyTo = sender()
       findAllByCategory(category).pipeTo(replyTo)
+
+    case GetProductsBySku(skus) =>
+      log.info(s"Getting products from Sku's ${skus.mkString(";")}")
+      val replyTo = sender()
+      findProductsBySku(skus).pipeTo(replyTo)  
 
     case CreateUserAccount(name, email, password) =>
       log.info(s"Creating User $name, $email, $password ")

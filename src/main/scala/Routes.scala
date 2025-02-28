@@ -172,6 +172,20 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport{
           })
         }
       } ~
+      pathPrefix("products") {
+        parameters("skus".as[String]) { skus =>
+          pathEndOrSingleSlash {
+            val skuList = skus.split(",").toList
+            val productList = (serviceActor ? GetProductsBySku(skuList))
+              .mapTo[Either[String, Seq[Product]]]
+              .recover { case _ => Left("Internal server error") }
+            complete(productList.map {
+              case Right(products) => StatusCodes.OK -> products.toJson
+              case Left(error) => StatusCodes.InternalServerError -> error.toJson
+            })
+          }
+        }
+      } ~
       pathPrefix(Segment / Segment) { (category, sku) =>         // Get Product by sku
         pathEndOrSingleSlash {
           val productOptionFuture: Future[Either[String, Option[Product]]]  =
@@ -185,7 +199,7 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport{
             })
         }
       } ~
-      pathPrefix(Segment) { category => //| parameter('nickname)) { nickname =>
+      pathPrefix(Segment) { category =>
         pathEndOrSingleSlash {
           val productList = (serviceActor ? GetProductsByCategory(category))
             .mapTo[Either[String, Seq[Product]]]
