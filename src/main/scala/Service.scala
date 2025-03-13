@@ -45,31 +45,42 @@ object PasswordUtils {
   val config = ConfigFactory.load()
   val secretKey = "okssishop" //config.getString("jwt.secret")
 
-  def createToken(username: String, expirationPeriodInHours: Int): String = {
+  def createToken(userId: Int, username: String, expirationPeriodInHours: Int): String = {
     val claims = JwtClaim(
       expiration = Some(System.currentTimeMillis() / 1000 + TimeUnit.HOURS.toSeconds(expirationPeriodInHours)),
       issuedAt = Some(System.currentTimeMillis() / 1000),
-      content = s"""{"name":"$username"}"""
-    )//.withClaim("name", username)
+      content = s"""{"id":$userId,"name":"$username"}"""
+    )
     JwtSprayJson.encode(claims, secretKey, algorithm)
   }
 
-  def generateTokens(username: String): TokensAnswer =
-    TokensAnswer(username, createToken(username, 1), createToken(username, 720))
+  def generateTokens(userId: Int, username: String): TokensAnswer =
+    TokensAnswer(username, createToken(userId, username, 1), createToken(userId, username, 720))
 
   def extractUsername(token: String): Option[String] =
     JwtSprayJson.decode(token, secretKey, Seq(algorithm)).toOption.flatMap { claim =>
       claim.content.parseJson.asJsObject.fields.get("name").map(_.convertTo[String])
     }
 
-  def validateToken(token: String): Option[JwtClaim] =
-    JwtSprayJson.decode(token, secretKey, Seq(algorithm)).toOption
-      .filter(_.expiration.exists(_ > System.currentTimeMillis() / 1000)) // check work period
+  def validateToken(token: String): Option[JwtClaim] = {
+    val decoded = JwtSprayJson.decode(token, secretKey, Seq(algorithm))//.toOption
+      //println(s"+++Decoded result: $decoded")
+    val maybeClaim = decoded.toOption
+     // println(s"++++maybe claim: $maybeClaim")
+       maybeClaim.filter(_.expiration.exists(_ > System.currentTimeMillis() / 1000))
+  } // check work period
 
-  def validateAndExtractUsername(token: String): Option[String] =
+  def validateAndExtractUserInfo(token: String): Option[(Int, String)] = {
+    //println(s"-----INPUT token: $token")
     validateToken(token).flatMap { claim =>
-      claim.content.parseJson.asJsObject.fields.get("name").map(_.convertTo[String])
+      val fields = claim.content.parseJson.asJsObject.fields
+      //println(s"------fields: $fields")
+      for {
+        id <- fields.get("id").map(_.convertTo[Int])
+        name <- fields.get("name").map(_.convertTo[String])
+      } yield {/*println(s"---elements From Token: ${id}, ${name}");*/(id, name)}
     }
+  }
 }
 
 object ServiceActor {
@@ -81,7 +92,11 @@ object ServiceActor {
   case class AuthenticateUser(email: String, passVerify: String)
   case class CreateUserAccount(name: String, email: String, password: String)
   case class RefreshTokens(refreshToken: String)
-  case object OperationSuccess
+  case class GetFavoritesByUserId(userId: Int)
+  case class AddFavorite(userId: Int, productSku: String)
+  case class DeleteFavorite(userId: Int, productSku: String)
+
+  //case object OperationSuccess
 }
 
 class ServiceActor extends Actor with ActorLogging with RepositorySlickImpl {
@@ -114,6 +129,7 @@ class ServiceActor extends Actor with ActorLogging with RepositorySlickImpl {
       val replyTo = sender()
       findProductsBySku(skus).pipeTo(replyTo)  
 
+    //-----SEQURITY-------
     case CreateUserAccount(name, email, password) =>
       log.info(s"Creating User $name, $email, $password ")
       val replyTo = sender()
@@ -137,7 +153,7 @@ class ServiceActor extends Actor with ActorLogging with RepositorySlickImpl {
               case Left(error) => Left(s"DB error: $error")
               case Right(userAccount) =>
                 //Right(UserAccountLoginAnswer(userAccount.name, PasswordUtils.createToken(userAccount.name, 1)))
-                Right(generateTokens(userAccount.name))
+                Right(generateTokens(userAccount.id.get, userAccount.name))
             }
         }
       registerUser.pipeTo(replyTo)
@@ -150,7 +166,7 @@ class ServiceActor extends Actor with ActorLogging with RepositorySlickImpl {
         case Right(Some(user)) =>
           if (PasswordUtils.verifyPassword(user.password, passVerify, user.salt)) {
             //Right(UserAccountLoginAnswer(user.name, PasswordUtils.createToken(user.name, 1)))
-            Right(generateTokens(user.name))
+            Right(generateTokens(user.id.get, user.name))
           } else Left("Password Incorrect")
         case Left(error) => Left(s"DB error: $error")
       }
@@ -160,11 +176,48 @@ class ServiceActor extends Actor with ActorLogging with RepositorySlickImpl {
       log.info(s"Refreshing Tokens")
       val replyTo = sender()
       Future {
-        validateAndExtractUsername(currentRefreshToken)
-          .map(generateTokens)
-          .toRight("Token overdue")
+        validateAndExtractUserInfo(currentRefreshToken)
+          .fold[Either[String, TokensAnswer]](Left("Token overdue")) {
+            case (userId, username) => Right(generateTokens(userId, username))
+          }
       }.pipeTo(replyTo)
 
+    //------FAVORITE--------
+    case AddFavorite(userId, productSku) =>
+      log.info(s"Creating Favorite $userId, $productSku ")
+      val replyTo = sender()
+      val storeFavorite:  Future[Either[String, List[Product]]] =
+        isFavoriteExist(userId, productSku).flatMap {
+          case Left(error) => Future.successful(Left(s"DB error: $error"))
+          case Right(true) => getFavorites(userId)
+          case Right(false) => insertFavorite(userId, productSku).flatMap {
+            case Left(err) => Future.successful(Left(s"DB error: $err"))
+            case Right(_) => getFavorites(userId)
+          }
+        }
+      storeFavorite.pipeTo(replyTo)
+
+    case DeleteFavorite(userId, productSku) =>
+      log.info(s"Deleting Favorite $userId, $productSku ")
+      val replyTo = sender()
+      val delFavorite:  Future[Either[String, List[Product]]] =
+        isFavoriteExist(userId, productSku).flatMap {
+          case Left(error) => Future.successful(Left(s"DB error: $error"))
+          case Right(false) => getFavorites(userId)
+          case Right(true) => removeFavorite(userId, productSku).flatMap {
+            case Left(err) => Future.successful(Left(s"DB error: $err"))
+            case Right(_) => getFavorites(userId)
+          }
+        }
+      delFavorite.pipeTo(replyTo)
+
+    case GetFavoritesByUserId(userId) =>
+      log.info(s"Get Favorites By UserId: $userId")
+      val replyTo = sender()
+      //val favorites: Future[Either[String, List[Product]]] =
+      getFavorites(userId)
+        .recover { case ex => Left(s"Error get Favorites: ${ex.getMessage}")}
+        .pipeTo(replyTo)
 
   }
 }

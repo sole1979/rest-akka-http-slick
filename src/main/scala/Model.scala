@@ -1,4 +1,5 @@
 import java.time.LocalDateTime
+import slick.jdbc.PostgresProfile.api._
 
 case class Product(sku: String, category: String, name: String, price: BigDecimal, descr: String, srcImg: String)
 case class UserAccount(id: Option[Int], name: String, email: String, phone: Option[String], password: String, salt: String, created_at: LocalDateTime)
@@ -7,6 +8,8 @@ case class UserAccountLogin(email: String, password: String)
 case class UserAccountLoginAnswer(name: String, token: String)
 case class TokensAnswer(username: String, accessToken: String, refreshToken: String)
 case class Answer(message: String)
+case class Favorite(userId: Int, productSku: String)
+case class FavoriteRequest(productSku: String)
 
 
 object SlickTables {
@@ -34,6 +37,19 @@ object SlickTables {
     override def * = (id.?, name, email, phone, password, salt, created_at) <> (UserAccount.tupled, UserAccount.unapply)
   }
   lazy val userAccountTable = TableQuery[UserAccountTable]
+
+  class FavoritesTable(tag: Tag) extends Table[Favorite](tag, Some("shop"), "Favorites") {
+    def userId = column[Int]("user_id")
+    def productSku = column[String]("product_sku")
+
+    def pk = primaryKey("pk_favorites", (userId, productSku))
+
+    override def * = (userId, productSku) <> (Favorite.tupled, Favorite.unapply)
+
+    def user = foreignKey("fk_user", userId, TableQuery[UserAccountTable])(_.id, onDelete = ForeignKeyAction.Cascade)
+    def product = foreignKey("fk_product", productSku, TableQuery[ProductTable])(_.sku, onDelete = ForeignKeyAction.Cascade)
+  }
+  lazy val favoritesTable = TableQuery[FavoritesTable]
 
 }
 

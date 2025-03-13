@@ -12,7 +12,9 @@ trait ProductJsonProtocol extends DefaultJsonProtocol {
   implicit val userAccountRegisterFormat = jsonFormat3(UserAccountRegister)
   implicit val userAccountLoginFormat = jsonFormat2(UserAccountLogin)
   implicit val answerFormat = jsonFormat1(Answer)
-  implicit val userAccountLoginAnswer = jsonFormat2(UserAccountLoginAnswer)
+  implicit val userAccountLoginAnswerFormat = jsonFormat2(UserAccountLoginAnswer)
+  implicit val favoriteFormat = jsonFormat2(Favorite)
+  implicit val favoriteRequestFormat = jsonFormat1(FavoriteRequest)
 }
 
 object Main extends App with Routes with ProductJsonProtocol with SprayJsonSupport {
