@@ -5,6 +5,8 @@ import com.typesafe.config.ConfigFactory
 import java.security.SecureRandom
 import java.util.Base64
 import de.mkammerer.argon2.Argon2Factory
+
+import java.time.LocalDateTime
 //import pdi.jwt._
 //import pdi.jwt.spray.JwtSprayJson
 import pdi.jwt.{JwtAlgorithm, JwtClaim, JwtSprayJson}
@@ -16,6 +18,7 @@ import scala.concurrent.duration._
 import java.util.concurrent.TimeUnit
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
+import java.util.UUID
 
 object PasswordUtils {
   private val argon2 = Argon2Factory.create()
@@ -89,12 +92,14 @@ object ServiceActor {
   case class GetProduct(sku: String)
   case class GetProductsByCategory(category: String)
   case class GetProductsBySku(skus: List[String])
+  case class GetUserById(id: Int)
   case class AuthenticateUser(email: String, passVerify: String)
   case class CreateUserAccount(name: String, email: String, password: String)
   case class RefreshTokens(refreshToken: String)
   case class GetFavoritesByUserId(userId: Int)
   case class AddFavorite(userId: Int, productSku: String)
   case class DeleteFavorite(userId: Int, productSku: String)
+  case class AddOrderWithItems(request: OrderRequest)
 
   //case object OperationSuccess
 }
@@ -130,6 +135,23 @@ class ServiceActor extends Actor with ActorLogging with RepositorySlickImpl {
       findProductsBySku(skus).pipeTo(replyTo)  
 
     //-----SEQURITY-------
+    case GetUserById(id) =>
+      log.info(s"Find User by Id: $id")
+      val replyTo = sender()
+      val publicUserRespond: Future[Either[String, PublicUser]]= findUserAccountById(id).map {
+        case Right(Some(user)) =>
+          val publicUser = PublicUser(
+            id = user.id.get,
+            name = user.name,
+            email = user.email,
+            phone = user.phone
+          )
+          Right(publicUser)
+        case Right(None) => Left(s"User id=$id not found")
+        case Left(error) => Left(s"DB error $error")
+      }
+      publicUserRespond.pipeTo(replyTo)
+
     case CreateUserAccount(name, email, password) =>
       log.info(s"Creating User $name, $email, $password ")
       val replyTo = sender()
@@ -214,10 +236,40 @@ class ServiceActor extends Actor with ActorLogging with RepositorySlickImpl {
     case GetFavoritesByUserId(userId) =>
       log.info(s"Get Favorites By UserId: $userId")
       val replyTo = sender()
-      //val favorites: Future[Either[String, List[Product]]] =
-      getFavorites(userId)
-        .recover { case ex => Left(s"Error get Favorites: ${ex.getMessage}")}
-        .pipeTo(replyTo)
+      getFavorites(userId).map {
+          case Right(products) => Right(products)
+          case Left(error) => Left(s"DB error: $error")
+      }.pipeTo(replyTo)
+//------- ORDER------
+    case AddOrderWithItems(request) =>
+      log.info(s"Add Order With Items")
+      val replyTo = sender()
+      def createOrder(request: OrderRequest): Future[Either[String, UUID]] = {
+        val orderId = UUID.randomUUID()
+        val order = Order(
+          id = orderId,
+          createdAt = LocalDateTime.now(),
+          userId = request.userId,
+          name = request.name,
+          phone = request.phone,
+          email = request.email,
+          status = request.status
+        )
+        val items = request.items.map { item =>
+          OrderItem(
+            orderItemId = UUID.randomUUID(),
+            orderId = orderId,
+            productSku = item.productSku,
+            quantity = item.quantity,
+            priceProduct = item.price
+          )
+        }
+        insertOrderWithItems(order, items)
+      }
+      createOrder(request).map {
+        case Right(uuid) => Right(uuid)
+        case Left(error) => Left(s"DB error: $error")
+      }.pipeTo(replyTo)
 
   }
 }

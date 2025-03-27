@@ -2,6 +2,7 @@ import scala.concurrent.Future
 //import MyExecContext._
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
+import java.util.UUID
 import slick.jdbc.PostgresProfile.api._
 
 //trait Repository {
@@ -39,6 +40,11 @@ trait RepositorySlickImpl { //extends Repository {
       .map(Right(_))
       .recover {case ex => Left(ex.getMessage)}
   //--------USER------------------------------------
+  def findUserAccountById(userId: Int): Future[Either[String, Option[UserAccount]]] =
+    Connection.db.run(SlickTables.userAccountTable.filter(_.id === userId).result.headOption)
+      .map(Right(_))
+      .recover {case ex => Left(ex.getMessage)}  // error db
+
   def findUserAccount(email: String): Future[Either[String, Option[UserAccount]]] =
     Connection.db.run(SlickTables.userAccountTable.filter(_.email === email).result.headOption)
       .map(Right(_))
@@ -59,33 +65,32 @@ trait RepositorySlickImpl { //extends Repository {
 
   //--------FAVORITES-------
   def isFavoriteExist(userId: Int, productSku: String): Future[Either[String, Boolean]] = {
-    Connection.db.run(SlickTables.favoritesTable.filter(f => f.userId === userId && f.productSku === productSku).exists.result)
+    Connection.db.run(SlickTables.favoriteTable.filter(f => f.userId === userId && f.productSku === productSku).exists.result)
       .map(Right(_))
       .recover { case ex => Left(ex.getMessage)}
   }
 
   def insertFavorite(userId: Int, productSku: String): Future[Either[String, Boolean]] = {
-    Connection.db.run(SlickTables.favoritesTable += Favorite(userId, productSku))
+    Connection.db.run(SlickTables.favoriteTable += Favorite(userId, productSku))
       .map(_ => Right(true))
       .recover {case ex => Left(ex.getMessage)}
   }
 
   def removeFavorite(userId: Int, productSku: String): Future[Either[String, Boolean]] = {
-    Connection.db.run(SlickTables.favoritesTable.filter(f => f.userId === userId && f.productSku === productSku).delete)
+    Connection.db.run(SlickTables.favoriteTable.filter(f => f.userId === userId && f.productSku === productSku).delete)
       .map(_ => Right(true))
       .recover { case ex => Left(ex.getMessage)}
   }
 
   def getFavorites(userId: Int): Future[Either[String, List[Product]]] = {
     Connection.db.run(
-      SlickTables.favoritesTable
+      SlickTables.favoriteTable
         .filter(_.userId === userId)
         .join(SlickTables.productTable)
         .on(_.productSku === _.sku)
         .map(_._2)
         .result
     ).map { products =>
-        //println(s"======PRODUCTS: $products")
         Right(products.toList)}
       .recover { case ex => Left(ex.getMessage)}
     /*val query = for {
@@ -95,5 +100,17 @@ trait RepositorySlickImpl { //extends Repository {
     Connection.db.run(query.result)
       .map(products => Right(products.toList))
       .recover { case ex => Left(ex.getMessage)}*/
+  }
+
+  //---------Orders-----
+  def insertOrderWithItems(order: Order, items: List[OrderItem]): Future[Either[String, UUID]] = {
+    val transaction = (for {
+      _ <- SlickTables.orderTable += order
+      _ <- SlickTables.orderItemTable ++= items
+    } yield order.id).transactionally
+
+    Connection.db.run(transaction)
+      .map(ordId => Right(ordId))
+      .recover { case ex => Left(ex.getMessage) }
   }
 }

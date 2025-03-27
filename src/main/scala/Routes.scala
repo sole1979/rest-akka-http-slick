@@ -2,6 +2,7 @@ import Main.serviceActor
 import ServiceActor.{GetProduct, GetProductsByCategory}
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
 import akka.http.scaladsl.server.Directives.{Segment, complete, get, pathEndOrSingleSlash, pathPrefix}
+import akka.http.scaladsl.server.directives.SecurityDirectives._
 import akka.http.scaladsl.server.Directives._
 import akka.pattern.ask
 import akka.util.Timeout
@@ -13,6 +14,8 @@ import spray.json._
 import akka.http.scaladsl.server.Route
 import akka.http.scaladsl.model.{ContentTypes, HttpEntity, HttpResponse, StatusCode, StatusCodes}
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
+
+import java.util.UUID
 //import akka.http.scaladsl.model.headers.{HttpCookie, RawHeader, `Set-Cookie`}
 import akka.http.scaladsl.model.headers._
 //import akka.http.scaladsl.model.headers.SameSite
@@ -174,6 +177,29 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport {
         }
       } ~
       get {
+        pathPrefix("user") {
+          pathEndOrSingleSlash {
+            optionalHeaderValueByName("Authorization") {
+              case Some(tokenWithPrefix) =>
+                val token = tokenWithPrefix.stripPrefix("Bearer ").trim
+                PasswordUtils.validateAndExtractUserInfo(token) match {
+                  case Some((userId, _)) =>
+                    val userIdResult: Future[Either[String, PublicUser]] =
+                      (serviceActor ? GetUserById(userId))
+                        .mapTo[Either[String, PublicUser]]
+                        .recover { case _ => Left("Internal server error") }
+                    complete(userIdResult.map {
+                      case Right(publicUser) => StatusCodes.OK -> publicUser.toJson
+                      case Left(error) => StatusCodes.InternalServerError -> error.toJson
+                    })
+                  case None => complete(StatusCodes.Unauthorized -> "Invalid token".toJson)
+                }
+              case None => complete(StatusCodes.Unauthorized -> "Missing token".toJson)
+            }
+          }
+        }
+      }~
+      get {
         pathPrefix("favorites") {
           pathEndOrSingleSlash {
             optionalHeaderValueByName("Authorization") {
@@ -254,7 +280,7 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport {
             })
           }
       } ~
-      post {
+      post {  // add favorite
         pathPrefix("favorite") {
           pathEndOrSingleSlash {
             optionalHeaderValueByName("Authorization") {
@@ -278,8 +304,8 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport {
             }
           }
         }
-      }~
-      delete {
+      } ~
+      delete {    // delete favorite
         pathPrefix("favorite" / Segment) { productSku =>
           pathEndOrSingleSlash {
             optionalHeaderValueByName("Authorization") {
@@ -301,7 +327,25 @@ trait Routes extends ProductJsonProtocol with SprayJsonSupport {
             }
           }
         }
+      } ~
+      post { // add order
+        pathPrefix("order") {
+          pathEndOrSingleSlash {
+            entity(as[OrderRequest]) { orderRequest =>
+              val addOrderResult: Future[Either[String, UUID]] =
+                (serviceActor ? AddOrderWithItems(orderRequest))
+                  .mapTo[Either[String, UUID]]
+                  .recover { case _ => Left("Internal server error") }
+              complete(addOrderResult.map {
+                case Right(uuid) => StatusCodes.OK -> uuid.toJson
+                case Left(error) => StatusCodes.InternalServerError -> error.toJson
+              })
+            }
+          }
+        }
       }
+
+
 
   }
 }
